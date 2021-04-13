@@ -33,7 +33,7 @@ deployment was successful and assisting with the school's iPad program. Helped c
 - I find offensive cyber security very interesting and I am slowly but surely pursuing an OSCP certification. You can find me on <a href="https://www.hackthebox.eu/profile/183003" target="_blank">Hack The Box</a>.
 
 ### Music
-- Music as a great way to release stress. The instruments I play are the bass guitar, the banjo, and the guitar.
+- Music is a great way to release stress. The instruments I play are the bass guitar, the banjo, and the guitar.
 - Composition of music is something that interests me as well. You can find me on <a href="https://musescore.com/user/32358930" target="_blank">MuseScore</a>.
 
 ### Language
