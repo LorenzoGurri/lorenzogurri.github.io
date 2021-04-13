@@ -1,0 +1,17 @@
+Lorenzo Gurri:
+  name        : "Lorenzo Gurri"
+  bio         : "Learning everyday"
+  avatar      : "/assets/images//profile_pic.jpg"
+  links:
+    - label: "Email"
+      icon: "fas fa-envelope-square"
+      url: "mailto: gurril@rpi.edu"
+    - label: "Github"
+      icon: "fas fa-github-square"
+      url: "https://github.com/lorenzogurri"
+    - label: "HTB"
+      icon: "fas fa-cube"
+      url: "https://www.hackthebox.eu/profile/183003"
+    - label: "MuseScore"
+      icon: "fas fa-music"
+      url: "https://musescore.com/user/32358930"
