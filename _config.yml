@@ -38,6 +38,11 @@ defaults:
       layout: single
       author_profile: true
 
+collections:
+  mt2:
+    output: true
+
+
 exclude:
   - Gemfile
   - Gemfile.lock
