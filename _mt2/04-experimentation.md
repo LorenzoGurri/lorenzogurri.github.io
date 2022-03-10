@@ -139,6 +139,21 @@ Reaper seems to accept the plugin with no problem and has a nice little Gain sli
 
 From here we have a nice testing setup and a place to start implementing!
 
+## Hosting on Github
+
+Lets commit and push the changes to github. This is easy since every Rust crate uses git for 
+version control. Adding our changes to Github is as easy as adding the repo as origin,
+committing and pushing our changes:
+
+```
+git add .gitignore Cargo.toml src
+git commit
+git remote add origin git@github.com:LorenzoGurri/ria_lv2.git
+git push --set-upstream origin master
+```
+
+We can now access our repo [here](https://github.com/LorenzoGurri/ria_lv2)
+
 [^1]: [Difference in library types](https://users.rust-lang.org/t/what-is-the-difference-between-dylib-and-cdylib/28847)
 [^2]: [Sample Code](https://docs.rs/lv2/latest/lv2/)
 [^3]: [Sample TTL files](https://rustaudio.github.io/rust-lv2/chapter/amp.html)
