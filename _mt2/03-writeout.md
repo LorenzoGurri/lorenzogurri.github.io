@@ -3,7 +3,7 @@ layout: single
 title: Music & Tech 2 Writeout
 toc: true
 toc_sticky: true
-toc_label: "Ideas"
+toc_label: "Writeout"
 toc_icon: "file-alt"
 excerpt: "Lets define what the plugin will do"
 author: Lorenzo Gurri

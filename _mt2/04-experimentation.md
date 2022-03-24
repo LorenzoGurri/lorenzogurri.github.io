@@ -3,7 +3,7 @@ layout: single
 title: Music & Tech 2 Experimentation and Setup
 toc: true
 toc_sticky: true
-toc_label: "Ideas"
+toc_label: "Setup"
 toc_icon: "file-alt"
 excerpt: "Lets get our hands dirty"
 author: Lorenzo Gurri
