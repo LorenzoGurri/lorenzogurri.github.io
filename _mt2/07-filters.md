@@ -22,7 +22,7 @@ One easy way to start using them is to modulate
 the amplitude of the signal between 0 and 1. We
 can do this pretty easily in Rust using the `lv2` crate.
 
-### The LFO struct
+### The LFO Struct
 
 Here we define and implement the `LFO` struct. We first define
 our attributes of `sr` and `state`. The `sr` variable is
@@ -50,12 +50,8 @@ impl LFO {
   fn tick(&mut self, in_sample: f32, freq: f32) -> f32 {
     // since you can think of sinusoidal functions in
     // terms of circles, we only need the state to
-    // increase from 0 to freq
-    self.state = if self.state == freq {
-      1.
-    } else { 
-      self.state+1.
-    };
+    // increase from 0 to freq-1
+    self.state = (self.state+1)%(freq-1)
     
     // The sinusoid itself.
     (((2. * std::f32::consts::PI *self.state / freq).cos()+1.) / 2.) * in_sample
@@ -116,5 +112,286 @@ impl Plugin for LFOfilter {
 
 lv2_descriptors!(LFOfilter);
 ```
-## TODO (MORE FILTERS)
+## Simple Echo
 
+An echo effect combines a number of delays and the input signal to
+produce a, well, echo. To implement an echo, we need to have a
+representation of a delay implemented.
+
+### The Delay Struct
+
+Here we define a simple delay. It populates a `LinkedList` with
+samples until it is full and then starts returning them.
+
+```rust 
+struct Delay {
+  sr: f32,
+  buffer: LinkedList<f32>,
+}
+
+impl Delay {
+  // create a new Delay object
+  fn new(sr: f64) -> Delay {
+    Self { sr: (sr as f32), buffer: LinkedList::new() }
+  }
+
+  // return either a delayed sample or the current one 
+  // if the buffer isn't filled yet.
+  fn tick(&mut self, in_sample: f32, delay: f32) -> f32 {
+    if self.buffer.len() < (delay*self.sr) as usize {
+      self.buffer.push_back(in_sample);
+      return in_sample;
+    }
+    self.buffer.pop_front().unwrap_or(0.)
+  }
+}
+```
+
+To create the echo effect, we now combine a 
+number of `Delay`s. It's worth noting that we add
+a LV2 control port called `control`. This gives us the
+delay the user wants in seconds and controls how large
+the buffer gets in the `Delay` struct.
+
+```rust
+// Our Collection of LV2 ports
+#[derive(PortCollection)]
+struct Ports {
+  control: InputPort<Control>,
+  input: InputPort<Audio>,
+  output: OutputPort<Audio>,
+}
+
+#[uri("https://my.example.code/DelayFilter")]
+struct DelayFilter {
+  // use 5 delays for the effect
+  dly1: Delay,
+  dly2: Delay,
+  dly3: Delay,
+  dly4: Delay,
+  dly5: Delay,
+}
+
+impl Plugin for DelayFilter {
+  type Ports = Ports;
+  type InitFeatures = ();
+  type AudioFeatures = ();
+
+  fn new(plugin_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
+    Some(Self {
+      dly1: Delay::new(plugin_info.sample_rate()),
+      dly2: Delay::new(plugin_info.sample_rate()),
+      dly3: Delay::new(plugin_info.sample_rate()),
+      dly4: Delay::new(plugin_info.sample_rate()),
+      dly5: Delay::new(plugin_info.sample_rate()),
+    })
+  }
+
+  fn run(&mut self, ports: &mut Ports, _features: &mut (), _: u32) {
+    for (out_sample, in_sample) in Iterator::zip(ports.output.iter_mut(), ports.input.iter()) {
+      // combine the delays. As the echo dies, the amplitudes
+      // of the delays get smaller and smaller.
+      *out_sample = *in_sample
+          + 0.75 * self.dly1.tick(*in_sample, *ports.control)
+          + 0.50 * self.dly2.tick(*in_sample, *ports.control * 2.)
+          + 0.25 * self.dly3.tick(*in_sample, *ports.control * 3.)
+          + 0.10 * self.dly4.tick(*in_sample, *ports.control * 4.)
+          + 0.05 * self.dly5.tick(*in_sample, *ports.control * 5.);
+    }
+  }
+}
+```
+
+## Low Pass Filter
+
+A low pass filter attenuates frequencies higher than a cutoff and allows
+frequencies lower than it to pass. There are plenty of different types
+but a very common one is the butterworth filter. The definition of an
+`n` order butterworth filter's transfer function is:
+
+{:refdef: style="text-align: center;"}
+![formula](https://render.githubusercontent.com/render/math?math=\huge H(s)=\frac{1}{\sum_{k=0}^{n}\frac{a_k}{\omega_0^k}s^k})
+{: refdef }
+
+Note that this is in the frequency domain and is not discretized. We can get a given 
+![formula](https://render.githubusercontent.com/render/math?math=\Large a_k),
+through the definition below:
+
+{:refdef: style="text-align: center;"}
+![formula](https://render.githubusercontent.com/render/math?math=\huge a_{k%2B1}=\frac{\cos(k\gamma)}{\sin((k%2B1)\gamma)})
+{: refdef }
+
+Where 
+![formula](https://render.githubusercontent.com/render/math?math=\Large \gamma=\frac{\pi}{2n})
+and
+![formula](https://render.githubusercontent.com/render/math?math=\Large a_0=1). As the order 
+becomes larger, the butterworth filter's transition band gets smaller and the attenuation
+becomes sharper.
+
+Here we can see the bode plots of
+![formula](https://render.githubusercontent.com/render/math?math=\Large n=2,4,8,16)
+pole butterworth filters generated with the code below.
+
+```python
+import control
+import matplotlib.pyplot as plt
+import numpy as np
+
+# code modeled from
+# https://www.youtube.com/watch?v=HJ-C4Incgpw
+
+# calculate the transfer function
+# and the bode plot
+def calc(n, dt, freq_c, omega_0):
+    # calculate a_ks
+    a = np.zeros(n+1)
+    a[0] = 1
+    gamma = np.pi / (2*n)
+    for k in range(n):
+        a[k+1] = (np.cos(k*gamma) / np.sin((k+1)*gamma))*a[k]
+
+    # numerator and denominator of the transfer function
+    num = np.array([1])
+    den = np.zeros(n+1)
+
+    # calculate the denominator
+    for k in range(n+1):
+        den[n-k] = a[k]/pow(omega_0,k)
+
+    # continuous butterworth Transfer Function
+    butterworth = control.TransferFunction(num,den)
+
+    # calc the bode plot
+    control.bode(butterworth, Hz=True)
+
+    # graph
+    fig = plt.gcf()
+    mag_axis, phase_axis = fig.axes
+    mag_axis.axvline(x=freq_c, color='red', linestyle='--')
+    phase_axis.axvline(x=freq_c, color='red', linestyle='--')
+
+# number of poles
+n=2
+# change in time (1 / sample rate)
+dt = 1 / 44100
+# cutoff frequency
+freq_c = 400
+# cutoff frequency in rad/s
+omega_0 = 2 * np.pi * freq_c
+
+calc(n, dt, freq_c, omega_0)
+n=4
+calc(n, dt, freq_c, omega_0)
+n=8
+calc(n, dt, freq_c, omega_0)
+n=16
+calc(n, dt, freq_c, omega_0)
+plt.show()
+```
+
+![formula](/assets/images/mt2_butterworth.png)
+
+Notice how the filter becomes better at attenuating the unwanted frequencies
+as the number of poles increases
+but the phase shift of the output signal generated becomes worse and worse.
+
+To make this transfer function useful, we can first discretize it through
+a bilinear transform:
+
+{:refdef: style="text-align: center;"}
+![formula](https://render.githubusercontent.com/render/math?math=\huge s = \frac{2}{T}\cdot\frac{1-z^{-1}}{1%2Bz^{-1}})
+{: refdef }
+
+Afterwards, we turn the transfer function into a difference equation we could
+use programmatically.
+
+{:refdef: style="text-align: center;"}
+![formula](https://render.githubusercontent.com/render/math?math=\huge H(z) = \frac{\beta_0 %2B \beta_1z^{-1}%2B\beta_1z^{-2}%2B\dots}{1-\alpha_1z^{-1}-\alpha_2z^{-2}-\dots})
+{: refdef }
+
+{:refdef: style="text-align: center;"}
+![formula](https://render.githubusercontent.com/render/math?math=\huge y[n]=\alpha_1y[n-1]%2B\alpha_2y[n-2]%2B\dots%2B\beta_0x[n]%2B\beta_1x[n-1]%2B\dots)
+{: refdef }
+
+### The IIRLowPass Struct
+
+In Rust, there is a library that is capable of doing
+these operations for us called `biquad`.
+
+It is able to calculate 2nd order IIR Filters.
+```rust
+struct IIRLowPass {
+    fs: f32,
+    cutoff: f32,
+    bq: DirectForm2Transposed<f32>,
+}
+
+impl IIRLowPass {
+  fn new(sr: f64) -> IIRLowPass {
+    let coeffs = Coefficients::<f32>::from_params(
+      Type::LowPass,
+      (sr as f32).hz(),
+      (20000 as f32).hz(),
+      Q_BUTTERWORTH_F32,
+    )
+    .unwrap();
+
+    Self {
+      fs: (sr as f32),
+      cutoff: 20000.,
+      bq: DirectForm2Transposed::<f32>::new(coeffs),
+    }
+  }
+
+  fn tick(&mut self, in_sample: f32, cutoff: f32) -> f32 {
+    if cutoff != self.cutoff {
+      let coeffs = Coefficients::<f32>::from_params(
+        Type::LowPass,
+        (self.fs as f32).hz(),
+        (cutoff as f32).hz(),
+        Q_BUTTERWORTH_F32,
+      )
+      .unwrap();
+      self.bq = DirectForm2Transposed::<f32>::new(coeffs);
+      self.cutoff = cutoff;
+    }
+    self.bq.run(in_sample)
+  }
+}
+```
+
+`Coefficients::<f32>::from_params(...)` calculates the coefficients
+for the type of filter, the sample rate, and the cutoff frequency.
+
+Every tick, the coefficients and previous two output values are used
+to calculate the next output sample. Also note that the control port
+is in hz from range 20 to 20000.
+
+```rust
+#[uri("https://my.example.code/LPFilter")]
+struct LPFilter {
+  lpf: IIRLowPass,
+}
+
+impl Plugin for LPFilter {
+  type Ports = Ports;
+  type InitFeatures = ();
+  type AudioFeatures = ();
+
+  fn new(plugin_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
+    Some(Self {
+      lpf: IIRLowPass::new(plugin_info.sample_rate()),
+    })
+  }
+
+  fn run(&mut self, ports: &mut Ports, _features: &mut (), _: u32) {
+    for (out_sample, in_sample) in Iterator::zip(ports.output.iter_mut(), ports.input.iter()) {
+      *out_sample = self.lpf.tick(*in_sample, *ports.control)
+    }
+  }
+}
+```
+
+## High Pass Filter
+
+## Flanger
