@@ -25,53 +25,61 @@ can do this pretty easily in Rust using the `lv2` crate.
 ### The LFO Struct
 
 Here we define and implement the `LFO` struct. We first define
-our attributes of `fs` and `state`. The `fs` variable is
+our attributes of `fs` and `x`. The `fs` variable is
 the sample rate of our audio. We get this from the host
-when we initialize the plugin. This is only needed if we want
-to oscillate in terms of seconds (aka we add a control port for
-the user). The `state` variable will tell us where on the wave we are.
+when we initialize the plugin. The `x` variable will
+tell us where on the wave we are.
 
 ```rust
 // Sinusoidal LFO
-struct LFO {
+struct LFO {    
   // sample rate
-  fs: f64,
+  fs: f32,
   // where we are on the wave
-  state: f32
+  x: f32
 }
 
 impl LFO {
   // create a new LFO object
-  fn new(fs: f64) -> LFO {
-      Self { fs, state: 1. }
+  fn new(fs: f32) -> LFO {
+    Self { fs, x: 0. }    
   }
 
-  // called on every sample.
-  fn tick(&mut self, in_sample: f32, freq: f32) -> f32 {
-    // since you can think of sinusoidal functions in
-    // terms of circles, we only need the state to
-    // increase from 0 to freq-1
-    self.state = (self.state+1)%(freq-1);
-    
+  fn tick(&mut self, freq: f32) -> f32 {
+    // The filter isn't activated
+    if freq == 0. {
+      return 1.
+    }
+
     // The sinusoid itself.
-    (((2. * std::f32::consts::PI *self.state / freq).cos()+1.) / 2.) * in_sample
+    let out = ((2. * std::f32::consts::PI *self.x * freq / self.fs).cos()+1.) / 2.;
+
+    // since you can think of sinusoidal functions in
+    // terms of circles, we only need x to
+    // increase from 0 to fs / f
+    self.x = (self.x + 1.)%(self.fs / freq);
+    
+    out
   }
 }
 ```
 
-The last line of the `tick` function isn't very clear. Lets write it
-a little neater and see what it looks like on a graph.
+The line of the `tick` function that calculates
+the return value isn't very clear. Lets write it
+a little neater and see what it looks like on a graph when
+`freq=1`
+
 
 {:refdef: style="text-align: center;"}
-![formula](https://render.githubusercontent.com/render/math?math=\huge \frac{\cos(2\pi x / f)%2B1}{2})
+![formula](https://render.githubusercontent.com/render/math?math=\huge \frac{\cos(2\pi xf / f_s)%2B1}{2})
 {: refdef }
 
 ![Sinusoid](/assets/images/mt2_lfo_graph.png)
 
-Where `x` is our `state` variable and `f` is `freq` variable that tells us
-the frequency we want the LFO to work on. This still looks odd, lets break
+`f` tells us the frequency we want the
+LFO to work on given the sample rate. This still looks odd, lets break
 it down further into two parts. The first part,
-![formula](https://render.githubusercontent.com/render/math?math=\Large \cos(2\pi x / f)),
+![formula](https://render.githubusercontent.com/render/math?math=\Large \cos(2\pi xf / f_s)),
 will give us a cosine wave of frequency `f`. The second part deals with 
 shifting the output space of the cosine function. We want our output to
 be between zero and one. The cosine function will give us values between
@@ -79,10 +87,18 @@ be between zero and one. The cosine function will give us values between
 to get the range we want.
 
 We can now use our LFO struct with the `lv2` crate to make a simple plugin.
-We could further develop it by adding a control port and allowing a user
-to control the frequency, but we can do that later.
+We add a port called `freq` with a range of 0 to 20 to allow a user to
+change the frequency of the LFO as they see fit.
 
 ```rust
+// Our Collection of LV2 ports
+#[derive(PortCollection)]
+struct Ports {
+  freq: InputPort<Control>,
+  input: InputPort<Audio>,
+  output: OutputPort<Audio>,
+}
+
 // not a real URL, just used for the example
 #[uri("https://my.example.code/LFOfilter")]
 struct LFOfilter {
@@ -98,15 +114,14 @@ impl Plugin for LFOfilter {
   // create a new LFOfilter object, since it has an attribute
   // of type LFO, we need to initialize it.
   fn new(plugin_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
-    Some(Self {lfo: LFO::new(plugin_info.sample_rate())})
+    Some(Self {lfo: LFO::new(plugin_info.sample_rate() as f32)}) 
   }
 
   // run our lfo on the in-samples
   fn run(&mut self, ports: &mut Ports, _features: &mut (), _: u32) {
     for (out_sample, in_sample) in Iterator::zip(ports.output.iter_mut(), ports.input.iter()) {
-      *out_sample = self.lfo.tick(*in_sample, self.lfo.fs as f32);
+      *out_sample = (*in_sample) * self.lfo.tick(*ports.freq);
     }
-    println!("{}", self.lfo.state);
   }
 }
 
@@ -149,7 +164,7 @@ impl Delay {
 
 To create the echo effect, we now combine a 
 number of `Delay`s. It's worth noting that we add
-a LV2 control port called `control`. This gives us the
+a LV2 control port called `delay`. This gives us the
 delay the user wants in seconds and controls how large
 the buffer gets in the `Delay` struct.
 
@@ -157,7 +172,7 @@ the buffer gets in the `Delay` struct.
 // Our Collection of LV2 ports
 #[derive(PortCollection)]
 struct Ports {
-  control: InputPort<Control>,
+  delay: InputPort<Control>,
   input: InputPort<Audio>,
   output: OutputPort<Audio>,
 }
@@ -192,11 +207,11 @@ impl Plugin for DelayFilter {
       // combine the delays. As the echo dies, the amplitudes
       // of the delays get smaller and smaller.
       *out_sample = *in_sample
-          + 0.75 * self.dly1.tick(*in_sample, *ports.control)
-          + 0.50 * self.dly2.tick(*in_sample, *ports.control * 2.)
-          + 0.25 * self.dly3.tick(*in_sample, *ports.control * 3.)
-          + 0.10 * self.dly4.tick(*in_sample, *ports.control * 4.)
-          + 0.05 * self.dly5.tick(*in_sample, *ports.control * 5.);
+          + 0.75 * self.dly1.tick(*in_sample, *ports.delay)
+          + 0.50 * self.dly2.tick(*in_sample, *ports.delay * 2.)
+          + 0.25 * self.dly3.tick(*in_sample, *ports.delay * 3.)
+          + 0.10 * self.dly4.tick(*in_sample, *ports.delay * 4.)
+          + 0.05 * self.dly5.tick(*in_sample, *ports.delay * 5.);
     }
   }
 }
@@ -364,7 +379,7 @@ impl IIRLowPass {
 for the type of filter, the sample rate, and the cutoff frequency.
 
 Every tick, the coefficients and previous two output values are used
-to calculate the next output sample. Also note that the control port
+to calculate the next output sample. Also note that the `freq` port
 is in hz from range 20 to 20000.
 
 ```rust
@@ -386,7 +401,7 @@ impl Plugin for LPFilter {
 
   fn run(&mut self, ports: &mut Ports, _features: &mut (), _: u32) {
     for (out_sample, in_sample) in Iterator::zip(ports.output.iter_mut(), ports.input.iter()) {
-      *out_sample = self.lpf.tick(*in_sample, *ports.control)
+      *out_sample = self.lpf.tick(*in_sample, *ports.freq)
     }
   }
 }
