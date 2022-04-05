@@ -9,7 +9,7 @@ excerpt: "Writing filters in Rust"
 author: Lorenzo Gurri
 ---
 
-In this post I talk about implementing some simple filters
+In this post I talk about implementing four filters
 using the `lv2` library in Rust.
 
 ## Amplitude LFO
@@ -25,7 +25,7 @@ can do this pretty easily in Rust using the `lv2` crate.
 ### The LFO Struct
 
 Here we define and implement the `LFO` struct. We first define
-our attributes of `sr` and `state`. The `sr` variable is
+our attributes of `fs` and `state`. The `fs` variable is
 the sample rate of our audio. We get this from the host
 when we initialize the plugin. This is only needed if we want
 to oscillate in terms of seconds (aka we add a control port for
@@ -35,15 +35,15 @@ the user). The `state` variable will tell us where on the wave we are.
 // Sinusoidal LFO
 struct LFO {
   // sample rate
-  sr: f64,
+  fs: f64,
   // where we are on the wave
   state: f32
 }
 
 impl LFO {
   // create a new LFO object
-  fn new(sr: f64) -> LFO {
-      Self { sr, state: 1. }
+  fn new(fs: f64) -> LFO {
+      Self { fs, state: 1. }
   }
 
   // called on every sample.
@@ -51,7 +51,7 @@ impl LFO {
     // since you can think of sinusoidal functions in
     // terms of circles, we only need the state to
     // increase from 0 to freq-1
-    self.state = (self.state+1)%(freq-1)
+    self.state = (self.state+1)%(freq-1);
     
     // The sinusoid itself.
     (((2. * std::f32::consts::PI *self.state / freq).cos()+1.) / 2.) * in_sample
@@ -104,7 +104,7 @@ impl Plugin for LFOfilter {
   // run our lfo on the in-samples
   fn run(&mut self, ports: &mut Ports, _features: &mut (), _: u32) {
     for (out_sample, in_sample) in Iterator::zip(ports.output.iter_mut(), ports.input.iter()) {
-      *out_sample = self.lfo.tick(*in_sample, self.lfo.sr as f32);
+      *out_sample = self.lfo.tick(*in_sample, self.lfo.fs as f32);
     }
     println!("{}", self.lfo.state);
   }
@@ -125,20 +125,20 @@ samples until it is full and then starts returning them.
 
 ```rust 
 struct Delay {
-  sr: f32,
+  fs: f32,
   buffer: LinkedList<f32>,
 }
 
 impl Delay {
   // create a new Delay object
-  fn new(sr: f64) -> Delay {
-    Self { sr: (sr as f32), buffer: LinkedList::new() }
+  fn new(fs: f64) -> Delay {
+    Self { fs: (fs as f32), buffer: LinkedList::new() }
   }
 
   // return either a delayed sample or the current one 
   // if the buffer isn't filled yet.
   fn tick(&mut self, in_sample: f32, delay: f32) -> f32 {
-    if self.buffer.len() < (delay*self.sr) as usize {
+    if self.buffer.len() < (delay*self.fs) as usize {
       self.buffer.push_back(in_sample);
       return in_sample;
     }
@@ -327,17 +327,17 @@ struct IIRLowPass {
 }
 
 impl IIRLowPass {
-  fn new(sr: f64) -> IIRLowPass {
+  fn new(fs: f64) -> IIRLowPass {
     let coeffs = Coefficients::<f32>::from_params(
       Type::LowPass,
-      (sr as f32).hz(),
+      (fs as f32).hz(),
       (20000 as f32).hz(),
       Q_BUTTERWORTH_F32,
     )
     .unwrap();
 
     Self {
-      fs: (sr as f32),
+      fs: (fs as f32),
       cutoff: 20000.,
       bq: DirectForm2Transposed::<f32>::new(coeffs),
     }
@@ -394,4 +394,43 @@ impl Plugin for LPFilter {
 
 ## High Pass Filter
 
-## Flanger
+In terms of math, we can represent a butterworth high pass
+filter as a low pass filter transformed with
+![formula](https://render.githubusercontent.com/render/math?math=\Large s=\frac{\omega_0^2}{s})
+
+Here we can see the bode plots of
+![formula](https://render.githubusercontent.com/render/math?math=\Large n=2,4,8)
+pole high-pass butterworth filters. It was generated with the same python code
+from the low-pass filter with the exception of the below snipet that
+calculates the the sum of the denominator with the transformed 
+![formula](https://render.githubusercontent.com/render/math?math=\Large s).
+
+```python
+# high pass
+s = pow(omega_0, 2) / control.TransferFunction.s
+
+# sum denominator
+s_den = np.int64(0)
+for k in range(n+1):
+  s_den += den[n-k]*(pow(s,k))
+
+H = 1 / s_den
+
+# continuous butterworth Transfer Function
+butterworth = control.TransferFunction(H)
+```
+
+![formula](/assets/images/mt2_butterworth_high.png)
+
+In terms of implementing the filter, all we really need to change
+is the type of filter used:
+
+```rust 
+let coeffs = Coefficients::<f32>::from_params(
+  Type::HighPass,
+  (self.fs as f32).hz(),
+  (cutoff as f32).hz(),
+  Q_BUTTERWORTH_F32,
+).unwrap();
+```
+
